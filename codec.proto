@@ -1,0 +1,12 @@
+package codec;
+
+message RequestHeader {
+	required string method        = 1;
+	required uint64 seq           = 2;
+}
+
+message ResponseHeader {
+	required string method        = 1;
+	required uint64 seq           = 2;
+	optional string error         = 3;
+}
