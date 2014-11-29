@@ -1,6 +1,6 @@
 package codec
 
-import proto "code.google.com/p/goprotobuf/proto"
+import proto "github.com/golang/protobuf/proto"
 
 type RequestHeader struct {
 	Method           *string `protobuf:"bytes,1,req,name=method" json:"method,omitempty"`

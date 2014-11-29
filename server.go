@@ -7,7 +7,7 @@ import (
 	"net/rpc"
 	"sync"
 
-	"code.google.com/p/goprotobuf/proto"
+	"github.com/golang/protobuf/proto"
 )
 
 const MaxVarint = binary.MaxVarintLen64
