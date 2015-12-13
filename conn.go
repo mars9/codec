@@ -1,30 +1,26 @@
 package codec
 
 import (
-	"bufio"
 	"encoding/binary"
 	"io"
 
 	"github.com/golang/protobuf/proto"
 )
 
-const defaultBufferSize = 4 * 1024
+type DecodeReader interface {
+	io.ByteReader
+	io.Reader
+}
 
 // A Decoder manages the receipt of type and data information read from the
 // remote side of a connection.
 type Decoder struct {
-	r    *bufio.Reader
-	v    uint64
-	size int
-	buf  []byte
+	r   DecodeReader
+	buf []byte
 }
 
-// NewDecoder returns a new decoder that reads from the io.Reader. It the
-// argument io.Reader is a *bufio.Reader with large enough size, it uses the
-// underlying *bufio.Reader. Otherwise it creates a *bufio.Reader.
-func NewDecoder(r io.Reader) *Decoder {
-	return &Decoder{r: bufio.NewReaderSize(r, defaultBufferSize)}
-}
+// NewDecoder returns a new decoder that reads from the io.Reader.
+func NewDecoder(r DecodeReader) *Decoder { return &Decoder{r: r} }
 
 // Decode reads the next value from the input stream and stores it in the
 // data represented by the empty interface value. If m is nil, the value
@@ -34,23 +30,26 @@ func (d *Decoder) Decode(m proto.Message) (err error) {
 	if d.buf, err = readFull(d.r, d.buf); err != nil {
 		return err
 	}
+	if m == nil {
+		return err
+	}
 	return proto.Unmarshal(d.buf, m)
 }
 
-func readFull(r *bufio.Reader, data []byte) ([]byte, error) {
-	var err error
-	v, err := binary.ReadUvarint(r)
+func readFull(r DecodeReader, buf []byte) ([]byte, error) {
+	val, err := binary.ReadUvarint(r)
 	if err != nil {
-		return data, err
+		return buf[:0], err
 	}
-	size := int(v)
-	if len(data) < size {
-		data = make([]byte, size)
-	}
-	data = data[:size]
+	size := int(val)
 
-	_, err = io.ReadFull(r, data)
-	return data, err
+	if cap(buf) < size {
+		buf = make([]byte, size)
+	}
+	buf = buf[:size]
+
+	_, err = io.ReadFull(r, buf)
+	return buf, err
 }
 
 // An Encoder manages the transmission of type and data information to the

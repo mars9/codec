@@ -11,6 +11,8 @@ import (
 	"github.com/mars9/codec/wirepb"
 )
 
+const defaultBufferSize = 4 * 1024
+
 type serverCodec struct {
 	mu   sync.Mutex // exclusive writer lock
 	resp wirepb.ResponseHeader
@@ -33,10 +35,11 @@ type serverCodec struct {
 // read and discarded.
 func NewServerCodec(rwc io.ReadWriteCloser) rpc.ServerCodec {
 	w := bufio.NewWriterSize(rwc, defaultBufferSize)
+	r := bufio.NewReaderSize(rwc, defaultBufferSize)
 	return &serverCodec{
 		enc: NewEncoder(w),
 		w:   w,
-		dec: NewDecoder(rwc),
+		dec: NewDecoder(r),
 		c:   rwc,
 	}
 }

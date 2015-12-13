@@ -33,10 +33,11 @@ type clientCodec struct {
 // be read and then discarded.
 func NewClientCodec(rwc io.ReadWriteCloser) rpc.ClientCodec {
 	w := bufio.NewWriterSize(rwc, defaultBufferSize)
+	r := bufio.NewReaderSize(rwc, defaultBufferSize)
 	return &clientCodec{
 		enc: NewEncoder(w),
 		w:   w,
-		dec: NewDecoder(rwc),
+		dec: NewDecoder(r),
 		c:   rwc,
 	}
 }
