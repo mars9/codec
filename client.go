@@ -2,57 +2,88 @@ package codec
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"net/rpc"
 	"sync"
+
+	"github.com/golang/protobuf/proto"
+	"github.com/mars9/codec/wirepb"
 )
 
 type clientCodec struct {
-	r      messageReader
-	c      io.Closer
-	writer sync.Mutex
-	w      io.Writer
+	mu  sync.Mutex // exclusive writer lock
+	req wirepb.RequestHeader
+	enc *Encoder
+	w   *bufio.Writer
+
+	resp wirepb.ResponseHeader
+	dec  *Decoder
+	c    io.Closer
 }
 
+// NewClientCodec returns a new rpc.Client.
+//
+// A ClientCodec implements writing of RPC requests and reading of RPC
+// responses for the client side of an RPC session. The client calls
+// WriteRequest to write a request to the connection and calls
+// ReadResponseHeader and ReadResponseBody in pairs to read responses. The
+// client calls Close when finished with the connection. ReadResponseBody
+// may be called with a nil argument to force the body of the response to
+// be read and then discarded.
 func NewClientCodec(rwc io.ReadWriteCloser) rpc.ClientCodec {
+	w := bufio.NewWriterSize(rwc, defaultBufferSize)
 	return &clientCodec{
-		r: bufio.NewReader(rwc),
-		w: rwc,
-		c: rwc,
+		enc: NewEncoder(w),
+		w:   w,
+		dec: NewDecoder(rwc),
+		c:   rwc,
 	}
 }
 
-func (c *clientCodec) WriteRequest(req *rpc.Request, body interface{}) (err error) {
-	header := RequestHeader{
-		Method: &req.ServiceMethod,
-		Seq:    &req.Seq,
-	}
+func (c *clientCodec) WriteRequest(req *rpc.Request, body interface{}) error {
+	c.mu.Lock()
+	c.req.Method = req.ServiceMethod
+	c.req.Seq = req.Seq
 
-	c.writer.Lock()
-	if err = writeMessage(c.w, &header); err != nil {
-		c.writer.Unlock()
+	err := encode(c.enc, &c.req)
+	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	err = writeMessage(c.w, body)
-	c.writer.Unlock()
+	if err = encode(c.enc, body); err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	err = c.w.Flush()
+	c.mu.Unlock()
 	return err
 }
 
-func (c *clientCodec) ReadResponseHeader(resp *rpc.Response) (err error) {
-	var header ResponseHeader
-	if err = readMessage(c.r, &header); err != nil {
+func (c *clientCodec) ReadResponseHeader(resp *rpc.Response) error {
+	c.resp.Reset()
+	if err := c.dec.Decode(&c.resp); err != nil {
 		return err
 	}
-	resp.ServiceMethod = *header.Method
-	resp.Seq = *header.Seq
-	if header.Error != nil {
-		resp.Error = *header.Error
-	}
-	return err
+
+	resp.ServiceMethod = c.resp.Method
+	resp.Seq = c.resp.Seq
+	resp.Error = c.resp.Error
+	return nil
 }
 
-func (c *clientCodec) ReadResponseBody(body interface{}) error {
-	return readMessage(c.r, body)
+func (c *clientCodec) ReadResponseBody(body interface{}) (err error) {
+	if pb, ok := body.(proto.Message); ok {
+		return c.dec.Decode(pb)
+	}
+	return fmt.Errorf("%T does not implement proto.Message", body)
+}
+
+func encode(enc *Encoder, m interface{}) (err error) {
+	if pb, ok := m.(proto.Message); ok {
+		return enc.Encode(pb)
+	}
+	return fmt.Errorf("%T does not implement proto.Message", m)
 }
 
 func (c *clientCodec) Close() error { return c.c.Close() }

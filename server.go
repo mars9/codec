@@ -2,98 +2,81 @@ package codec
 
 import (
 	"bufio"
-	"encoding/binary"
+	"fmt"
 	"io"
 	"net/rpc"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/mars9/codec/wirepb"
 )
 
-const MaxVarint = binary.MaxVarintLen64
-
-func writeMessage(w io.Writer, m interface{}) error {
-	data, err := proto.Marshal(m.(proto.Message))
-	if err != nil {
-		return err
-	}
-
-	buf := make([]byte, MaxVarint)
-	n := binary.PutUvarint(buf[:], uint64(len(data)))
-	if _, err = w.Write(buf[:n]); err != nil {
-		return err
-	}
-	_, err = w.Write(data)
-	return err
-}
-
-type messageReader interface {
-	io.ByteReader
-	io.Reader
-}
-
-func readMessage(r messageReader, m interface{}) error {
-	size, err := binary.ReadUvarint(r)
-	if err != nil {
-		return err
-	}
-
-	data := make([]byte, size)
-	if _, err = r.Read(data); err != nil {
-		return err
-	}
-	if m != nil {
-		return proto.Unmarshal(data, m.(proto.Message))
-	}
-	return nil
-}
-
-func NewServerCodec(rwc io.ReadWriteCloser) rpc.ServerCodec {
-	return &serverCodec{
-		r: bufio.NewReader(rwc),
-		w: rwc,
-		c: rwc,
-	}
-}
-
 type serverCodec struct {
-	r      messageReader
-	c      io.Closer
-	writer sync.Mutex
-	w      io.Writer
+	mu   sync.Mutex // exclusive writer lock
+	resp wirepb.ResponseHeader
+	enc  *Encoder
+	w    *bufio.Writer
+
+	req wirepb.RequestHeader
+	dec *Decoder
+	c   io.Closer
 }
 
-func (s *serverCodec) ReadRequestHeader(req *rpc.Request) (err error) {
-	var header RequestHeader
-	if err = readMessage(s.r, &header); err != nil {
+// NewServerCodec returns a new rpc.ServerCodec.
+//
+// A ServerCodec implements reading of RPC requests and writing of RPC
+// responses for the server side of an RPC session. The server calls
+// ReadRequestHeader and ReadRequestBody in pairs to read requests from the
+// connection, and it calls WriteResponse to write a response back. The
+// server calls Close when finished with the connection. ReadRequestBody
+// may be called with a nil argument to force the body of the request to be
+// read and discarded.
+func NewServerCodec(rwc io.ReadWriteCloser) rpc.ServerCodec {
+	w := bufio.NewWriterSize(rwc, defaultBufferSize)
+	return &serverCodec{
+		enc: NewEncoder(w),
+		w:   w,
+		dec: NewDecoder(rwc),
+		c:   rwc,
+	}
+}
+
+func (c *serverCodec) WriteResponse(resp *rpc.Response, body interface{}) error {
+	c.mu.Lock()
+	c.resp.Method = resp.ServiceMethod
+	c.resp.Seq = resp.Seq
+	c.resp.Error = resp.Error
+
+	err := encode(c.enc, &c.resp)
+	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	req.ServiceMethod = *header.Method
-	req.Seq = *header.Seq
-	return nil
-}
-
-func (s *serverCodec) ReadRequestBody(body interface{}) error {
-	return readMessage(s.r, body)
-}
-
-func (s *serverCodec) WriteResponse(resp *rpc.Response, body interface{}) (err error) {
-	header := ResponseHeader{
-		Method: &resp.ServiceMethod,
-		Seq:    &resp.Seq,
-	}
-	if resp.Error != "" {
-		header.Error = &resp.Error
-	}
-
-	s.writer.Lock()
-	if err = writeMessage(s.w, &header); err != nil {
-		s.writer.Unlock()
+	if err = encode(c.enc, body); err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	err = writeMessage(s.w, body)
-	s.writer.Unlock()
+	err = c.w.Flush()
+	c.mu.Unlock()
 	return err
 }
 
-func (s *serverCodec) Close() error { return s.c.Close() }
+func (c *serverCodec) ReadRequestHeader(req *rpc.Request) error {
+	c.req.Reset()
+	if err := c.dec.Decode(&c.req); err != nil {
+		return err
+	}
+
+	req.ServiceMethod = c.req.Method
+	req.Seq = c.req.Seq
+	return nil
+}
+
+func (c *serverCodec) ReadRequestBody(body interface{}) error {
+	if pb, ok := body.(proto.Message); ok {
+		return c.dec.Decode(pb)
+	}
+	return fmt.Errorf("%T does not implement proto.Message", body)
+}
+
+func (c *serverCodec) Close() error { return c.c.Close() }
