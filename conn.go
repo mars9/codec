@@ -7,6 +7,8 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
+const bootstrapLen = 128 // memory to hold first slice; helps small buffers avoid allocation
+
 type DecodeReader interface {
 	io.ByteReader
 	io.Reader
@@ -20,7 +22,12 @@ type Decoder struct {
 }
 
 // NewDecoder returns a new decoder that reads from the io.Reader.
-func NewDecoder(r DecodeReader) *Decoder { return &Decoder{r: r} }
+func NewDecoder(r DecodeReader) *Decoder {
+	return &Decoder{
+		buf: make([]byte, 0, bootstrapLen),
+		r:   r,
+	}
+}
 
 // Decode reads the next value from the input stream and stores it in the
 // data represented by the empty interface value. If m is nil, the value
@@ -62,7 +69,10 @@ type Encoder struct {
 
 // NewEncoder returns a new encoder that will transmit on the io.Writer.
 func NewEncoder(w io.Writer) *Encoder {
-	return &Encoder{buf: &proto.Buffer{}, w: w}
+	buf := make([]byte, 0, bootstrapLen)
+	return &Encoder{
+		buf: proto.NewBuffer(buf),
+		w:   w}
 }
 
 // Encode transmits the data item represented by the empty interface value,
