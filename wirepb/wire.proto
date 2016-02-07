@@ -2,12 +2,12 @@ syntax = "proto3";
 package wirepb;
 
 message RequestHeader {
-	string Method               = 1;
-	uint64 Seq                  = 2;
+	string method               = 1;
+	uint64 seq                  = 2;
 }
 
 message ResponseHeader {
-	string Method               = 1;
-	uint64 Seq                  = 2;
+	string method               = 1;
+	uint64 seq                  = 2;
 	string error                = 3;
 }
