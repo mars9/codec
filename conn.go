@@ -72,7 +72,8 @@ func NewEncoder(w io.Writer) *Encoder {
 	buf := make([]byte, 0, bootstrapLen)
 	return &Encoder{
 		buf: proto.NewBuffer(buf),
-		w:   w}
+		w:   w,
+	}
 }
 
 // Encode transmits the data item represented by the empty interface value,
